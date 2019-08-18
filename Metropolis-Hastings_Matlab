@@ -1,0 +1,155 @@
+clear all
+close all
+clc
+
+gamma = 0.1;
+
+
+f     = @(p,x) 1./norm(x-p);
+F     = @(x) x./(1-norm(x)^2);               % x is vector
+
+Dfx   = @(x) (1+norm(x)^2)/(1-norm(x)^2)^3;
+q     = @(x,y) abs(Dfx(y)) * (1.0/(2*pi*gamma*gamma))*exp((-1.0/(2*gamma*gamma)) * norm( F(x) - F(y) )^2);
+
+
+x0 =  [0.5; 0.4];
+
+% Sensor locations 
+[s1x,s1y] = pol2cart(0       , 1);
+[s2x,s2y] = pol2cart(2*pi/3  , 1);
+[s3x,s3y] = pol2cart(4*pi/3  , 1);
+
+p1   = [s1x; s1y];
+p2   = [s2x; s2y];
+p3   = [s3x; s3y];
+
+qfx1_0 = f(p1, x0);
+qfx2_0 = f(p2, x0);
+qfx3_0 = f(p3, x0);
+
+sigma  = 0.15*max(abs([qfx1_0, qfx2_0, qfx3_0]));
+
+v1   = qfx1_0 + normrnd(0, sigma);
+v2   = qfx2_0 + normrnd(0, sigma);
+v3   = qfx3_0 + normrnd(0, sigma);
+
+vv   = [v1; v2; v3];
+
+
+max_iter = 50000;
+
+% Set initial x 
+x  = x0;
+
+xs = zeros(max_iter,2);
+alphas     = zeros(max_iter,1);
+pi_post_xs = zeros(max_iter,1);
+pi_post_ys = zeros(max_iter,1);
+kernel     = zeros(max_iter,1);
+
+
+for i = 1:max_iter
+    
+    % Step 1:
+    % Transform x using F(x) = z
+    z = F(x);
+    
+    % Step 2:
+    % Add random noise to z => z + w, w ~ N(0,gamma^2)
+    z_w = z + normrnd(0, gamma^2,[2,1]);
+    
+    % Step 3:
+    % Inverse transform y = F_inv(z+w)
+    
+    % Using the tip we know that y has to preserve polar angle.
+    % Here we assume that z = rho_z*cos(theta)i + rho_z*sin(theta)j
+    % hence y = rho_y*cos(theta)i + rho_y*sin(theta)j
+    
+    % We save the polar angle information from z
+    [theta, rho_z] = cart2pol(z_w(1), z_w(2));
+    
+    % We solved y using the information that rho_z*cos(theta) =
+    % rho_y*cos(theta)/(1+rho_y^2).
+    % ==> rho_z = rho_y/(1+rho_y^2 and we solve for rho_y.
+    % Using Wolfram alpha we get that
+    % rho_y = (sqrt(4*(rho_z*rho_z) + 1)-1)/(2*rho_z) (we discard the other
+    % solution because it is not between -1 and 1).
+    
+    rho_y    = (sqrt(4*(rho_z*rho_z) + 1)-1)/(2*rho_z);
+    
+    % we create new vector y in polar coordinates and transform it back to
+    % cartesian coordinates
+    [yx, yy] = pol2cart(theta, rho_y);
+    y        = [yx; yy];
+    
+    % Step 4:
+    % Calculate pi_post for x and y separately (these are used to compute
+    % alpha later)
+    
+    % For q vector in the exponent
+    qfx1    = f(p1,x);
+    qfx2    = f(p2,x);
+    qfx3    = f(p3,x);
+    
+    qfy1    = f(p1,y);
+    qfy2    = f(p2,y);
+    qfy3    = f(p3,y);
+    
+    pi_post_x = exp((norm(vv - [qfx1; qfx2; qfx3])^2)/(-2*sigma*sigma));
+    pi_post_y = exp((norm(vv - [qfy1;qfy2;qfy3])^2)/(-2*sigma*sigma));
+ 
+    % Step 5:
+    % Compute transition kernel for x and y
+    q_xy = q(x,y);
+    q_yx = q(y,x);
+    
+    % Step 6:
+    % Compute alpha
+   
+    alpha = ( pi_post_y * q_yx )/( pi_post_x * q_xy );
+    
+    alphas(i) = alpha;
+    
+    % Step 7:
+    % Sample t ~ Uni(0,1) and check if alpha accepted
+    t = unifrnd(0,1);
+    
+    % Step 8:
+    % Move or stay put
+    
+    if alpha > t
+        % move
+        x = y;
+        
+    else
+        % stay put
+        x = x;
+    end
+    
+    % Save our sequence 
+    xs(i,:) = x;
+    
+
+end
+
+%%
+
+figure(1)
+scatter(xs(:,1),xs(:,2),'b.'); hold on
+scatter(x0(1),x0(2),'ro')
+xlabel('x_1 coordinate')
+ylabel('x_2 coordinate')
+
+figure(2)
+subplot(3,1,1)
+plot(xs(:,1),'b')
+ylabel('x_1 value')
+
+subplot(3,1,2)
+plot(xs(:,2),'b')
+ylabel('x_2 value')
+
+subplot(3,1,3)
+plot(alphas,'r')
+ylabel('Acceptance ratio (alpha)')
+xlabel('Iteration')
