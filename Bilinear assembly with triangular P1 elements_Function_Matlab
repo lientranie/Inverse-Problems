@@ -1,0 +1,82 @@
+function K=bilin_asm(weakf, mesh)
+% BILIN_ASM - Bilinear assembly with triangular P1 elements
+%
+% Outputs a stiffness matrix K corresponding to a bilinear form and a mesh.
+% The bilinear form is a function handle with the parameters
+% @(ux,uy,vx,vy,u,v,x,y). The mesh is a struct with the fields mesh.p and
+% mesh.t.
+%
+% K = BILIN_ASM(bilin_form, mesh)
+%
+
+% local quadrature points
+Q=[1/6 2/3 1/6;
+   1/6 1/6 2/3];
+W=[1/3 1/3 1/3];
+
+% local basis functions and derivatives
+phi={};
+phi{1}=@(x,y)1-x-y;
+phi{2}=@(x,y)x;
+phi{3}=@(x,y)y;
+
+dphix={};
+dphix{1}=@(x,y)-1+0*x;
+dphix{2}=@(x,y)1+0*x;
+dphix{3}=@(x,y)0*x;
+
+dphiy={};
+dphiy{1}=@(x,y)-1+0*x;
+dphiy{2}=@(x,y)0*x;
+dphiy{3}=@(x,y)1+0*x;
+
+X=Q(1,:);
+Y=Q(2,:);
+
+% initialize I,J,V pairs
+I=zeros(1,3*3*size(mesh.p,2));
+J=I;
+V=I;
+
+for k = 1:size(mesh.t,2)
+    % nodes of the triangle
+    n1=mesh.p(:,mesh.t(1,k));
+    n2=mesh.p(:,mesh.t(2,k));
+    n3=mesh.p(:,mesh.t(3,k));
+    % affine mapping
+    B=[n2-n1 n3-n1];
+    c=n1;
+    % global quadrature points
+    q=bsxfun(@plus,B*Q,c);
+
+    % local stiffness matrix
+    A=zeros(3,3);
+
+    invBt=inv(B)';
+    
+    for j=1:3
+        Dphixj=invBt(1,1)*dphix{j}(X,Y)+...
+               invBt(1,2)*dphiy{j}(X,Y);
+        Dphiyj=invBt(2,1)*dphix{j}(X,Y)+...
+               invBt(2,2)*dphiy{j}(X,Y);
+        phij=phi{j}(X,Y);
+        for i=1:3
+            phii=phi{i}(X,Y);
+            Dphixi=invBt(1,1)*dphix{i}(X,Y)+...
+                   invBt(1,2)*dphiy{i}(X,Y);
+            Dphiyi=invBt(2,1)*dphix{i}(X,Y)+...
+                   invBt(2,2)*dphiy{i}(X,Y);
+            A(j,i)=sum(weakf(Dphixj,Dphiyj,Dphixi,Dphiyi,phij,phii,...
+                   q(1,:),q(2,:))*...
+                   abs(det(B)).*W);
+        end
+    end
+
+    ix=repmat(mesh.t(:,k),1,3);
+    jx=ix';
+    I((9*k-8):9*k)=ix(:);
+    J((9*k-8):9*k)=jx(:);
+    V((9*k-8):9*k)=A(:);
+end
+
+K=sparse(I,J,V,size(mesh.p,2),size(mesh.p,2));
